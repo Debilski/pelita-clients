@@ -6,12 +6,10 @@ import System.IO
 import System.Environment
 import System.ZMQ
 
-import qualified Data.Map as Map
 import Data.ByteString.Char8 (pack, unpack)
 
 import Text.JSON
 import Text.JSON.Types
-import Text.JSON.String (readJSValue, showJSValue, runGetJSON)
 
 processJson :: JSValue -> Either String JSValue
 processJson = \a -> Right a
@@ -20,20 +18,19 @@ processJson = \a -> Right a
 newtype PelitaMsg = PelitaMsg (String, String, JSValue) deriving (Show)
 
 extractPelitaMsg :: JSValue -> Either String PelitaMsg
-extractPelitaMsg (JSObject (JSONObject listObj)) = 
+extractPelitaMsg (JSObject (dataObj)) = 
   eitheredMsg where
-    mappedObj = Map.fromList listObj
-    -- extract the values from the Map
-    maybeMsg :: Maybe PelitaMsg
-    maybeMsg = do
-      JSString (JSONString action) <- Map.lookup "__action__" mappedObj
-      JSString (JSONString uuid) <- Map.lookup "__uuid__" mappedObj
-      theData <- Map.lookup "__data__" mappedObj
+    -- extract the values from the dataObj
+    resultMsg :: Result PelitaMsg
+    resultMsg = do
+      JSString (JSONString action) <- valFromObj "__action__" dataObj
+      JSString (JSONString uuid) <- valFromObj "__uuid__" dataObj
+      theData <- valFromObj "__data__" dataObj
       return $ PelitaMsg (action, uuid, theData)
 
-    eitheredMsg = case maybeMsg of
-      Just x -> Right x
-      Nothing -> Left "could not match this JSON"
+    eitheredMsg = case resultMsg of
+      Ok x -> Right x
+      Error s -> Left ("could not match this JSON (" ++ s ++ ")")
 extractPelitaMsg other = Left "could not match this JSON"
 
 
