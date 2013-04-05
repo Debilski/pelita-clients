@@ -42,11 +42,13 @@ doWithTeamName = showJSON "Haskell Stopping Player"
 
 doWithAction :: String -> JSValue -> JSValue
 doWithAction "team_name" _ = doWithTeamName
-doWithAction other _ = showJSON([("move", [0, 0])] :: [(String, [Int])])
+doWithAction other _ = showJSON . toJSObject $ ([("move", [0, 0])] :: [(String, [Int])])
 
 doWithPelitaMsg :: PelitaMsg -> JSValue
-doWithPelitaMsg (PelitaMsg (action, uuid, theData)) = JSObject $ toJSObject [("__uuid__", JSString (JSONString uuid)),
+doWithPelitaMsg (PelitaMsg (action, uuid, theData)) = showJSON $ toJSObject [("__uuid__", showJSON uuid),
                                                                              ("__return__", doWithAction action theData)]
+trace :: String -> IO String
+trace s = putStrLn s >> return s
 
 main :: IO ()
 main = do
@@ -65,9 +67,9 @@ main = do
         message <- receive server []
         let strMessage = unpack message
 
-        case runGetJSON readJSValue strMessage >>= extractPelitaMsg of
+        case resultToEither (decode strMessage) >>= extractPelitaMsg of
           Left  e -> error e
-          Right j -> send server (pack (showJSValue (doWithPelitaMsg j) "")) [] -- putStrLn $ show j
+          Right j -> trace(encode $ doWithPelitaMsg j) >>= \s -> send server (pack s) [] -- putStrLn $ show j
 
 --        putStrLn $ unwords ["Received request:", unpack message]
 
