@@ -1,6 +1,6 @@
 
 if length(Base.ARGS) != 1
-  error("usage: 'julia ./pelita-client.js <address>'")
+  error("usage: 'julia ./pelita-client.jl <address>'")
 else
   socket_address = Base.ARGS[1]
 end
