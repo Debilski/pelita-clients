@@ -11,39 +11,39 @@ import Data.ByteString.Char8 (pack, unpack)
 import Text.JSON
 import Text.JSON.Types
 
-processJson :: JSValue -> Either String JSValue
-processJson = \a -> Right a
+-- newtype PelitaMsg = PelitaMsg (String, String, JSValue) deriving (Show)
 
+newtype PelitaData = PelitaData (String) deriving (Show)
 
-newtype PelitaMsg = PelitaMsg (String, String, JSValue) deriving (Show)
+data PelitaMsg = PelitaMsg {
+   action :: String
+  ,uuid :: String
+  ,theData :: PelitaData
+} deriving (Show)
 
-extractPelitaMsg :: JSValue -> Either String PelitaMsg
-extractPelitaMsg (JSObject (dataObj)) = 
-  eitheredMsg where
-    -- extract the values from the dataObj
-    resultMsg :: Result PelitaMsg
-    resultMsg = do
-      JSString (JSONString action) <- valFromObj "__action__" dataObj
-      JSString (JSONString uuid) <- valFromObj "__uuid__" dataObj
-      theData <- valFromObj "__data__" dataObj
-      return $ PelitaMsg (action, uuid, theData)
+instance JSON PelitaMsg where
+  readJSON (JSObject o) = return $ PelitaMsg { action=action, uuid=uuid, theData=(PelitaData theData) }
+    where action   = grab o "__action__"
+          uuid     = grab o "__uuid__"
+          theData  = grab o "__data__"
 
-    eitheredMsg = case resultMsg of
-      Ok x -> Right x
-      Error s -> Left ("could not match this JSON (" ++ s ++ ")")
-extractPelitaMsg other = Left "could not match this JSON"
+          grab o s = case get_field o s of
+                Nothing            -> error "Invalid field " ++ show s
+                Just (JSString s') -> fromJSString s'
 
+extractPelitaMsg :: JSValue -> Result PelitaMsg
+extractPelitaMsg dataObj = readJSON dataObj
 
 doWithTeamName :: JSValue
 doWithTeamName = showJSON "Haskell Stopping Player"
 
-doWithAction :: String -> JSValue -> JSValue
+doWithAction :: String -> PelitaData -> JSValue
 doWithAction "team_name" _ = doWithTeamName
 doWithAction other _ = showJSON . toJSObject $ ([("move", [0, 0])] :: [(String, [Int])])
 
 doWithPelitaMsg :: PelitaMsg -> JSValue
-doWithPelitaMsg (PelitaMsg (action, uuid, theData)) = showJSON $ toJSObject [("__uuid__", showJSON uuid),
-                                                                             ("__return__", doWithAction action theData)]
+doWithPelitaMsg (PelitaMsg action uuid theData) = showJSON $ toJSObject [("__uuid__", showJSON uuid),
+                                                                         ("__return__", doWithAction action theData)]
 trace :: String -> IO String
 trace s = putStrLn s >> return s
 
@@ -64,9 +64,9 @@ main = do
         message <- receive server []
         let strMessage = unpack message
 
-        case resultToEither (decode strMessage) >>= extractPelitaMsg of
-          Left  e -> error e
-          Right j -> trace(encode $ doWithPelitaMsg j) >>= \s -> send server (pack s) [] -- putStrLn $ show j
+        case (decode strMessage) >>= readJSON of
+          Error e -> error e
+          Ok j -> trace(encode $ doWithPelitaMsg j) >>= \s -> send server (pack s) [] -- putStrLn $ show j
 
 --        putStrLn $ unwords ["Received request:", unpack message]
 
