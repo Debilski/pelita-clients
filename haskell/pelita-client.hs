@@ -11,6 +11,8 @@ import Data.ByteString.Char8 (pack, unpack)
 import Text.JSON
 import Text.JSON.Types
 
+import Debug.Trace
+
 -- newtype PelitaMsg = PelitaMsg (String, String, JSValue) deriving (Show)
 
 newtype PelitaData = PelitaData (String) deriving (Show)
@@ -30,23 +32,20 @@ instance JSON PelitaMsg where
           grab o s = case get_field o s of
                 Nothing            -> error "Invalid field " ++ show s
                 Just (JSString s') -> fromJSString s'
+                Just (JSObject o') -> show o'
 
-extractPelitaMsg :: JSValue -> Result PelitaMsg
-extractPelitaMsg dataObj = readJSON dataObj
+  showJSON msg = showJSON "not implemented"
 
 doWithTeamName :: JSValue
 doWithTeamName = showJSON "Haskell Stopping Player"
 
 doWithAction :: String -> PelitaData -> JSValue
 doWithAction "team_name" _ = doWithTeamName
-doWithAction other _ = showJSON . toJSObject $ ([("move", [0, 0])] :: [(String, [Int])])
+doWithAction other act = trace (show act) (showJSON . toJSObject $ ([("move", [0, 0])] :: [(String, [Int])]))
 
 doWithPelitaMsg :: PelitaMsg -> JSValue
 doWithPelitaMsg (PelitaMsg action uuid theData) = showJSON $ toJSObject [("__uuid__", showJSON uuid),
                                                                          ("__return__", doWithAction action theData)]
-trace :: String -> IO String
-trace s = putStrLn s >> return s
-
 main :: IO ()
 main = do
   args <- getArgs
@@ -66,7 +65,9 @@ main = do
 
         case (decode strMessage) >>= readJSON of
           Error e -> error e
-          Ok j -> trace(encode $ doWithPelitaMsg j) >>= \s -> send server (pack s) [] -- putStrLn $ show j
+          Ok j -> send server (pack s) [] -- putStrLn $ show j
+            where s = v
+                  v = encode $ doWithPelitaMsg j
 
 --        putStrLn $ unwords ["Received request:", unpack message]
 
