@@ -8,16 +8,20 @@ end
 using ZMQ
 using JSON
 
-ctx = ZMQContext(1)
-socket = ZMQSocket(ctx, ZMQ_PAIR)
+ctx = ZMQ.Context(1)
+socket = ZMQ.Socket(ctx, ZMQ.PAIR)
 ZMQ.connect(socket, socket_address)
 
 
 function handle_action(action, data)
+  print (action)
   if action == "team_name"
     "Julia Stopping Players"
+  elseif action == "set_initial"
   elseif action == "get_move"
     ["move" => [0,0]]
+  elseif action == "exit"
+    exit()
   end
 end
 
@@ -43,9 +47,9 @@ while true
 
   ret = handle_input(json_input)
 
-  json_output = JSON.to_json(ret)
+  json_output = JSON.json(ret)
 
-  ZMQ.send(socket, ZMQMessage(json_output))
+  ZMQ.send(socket, ZMQ.Message(json_output))
 end
 
 ZMQ.close(socket)
