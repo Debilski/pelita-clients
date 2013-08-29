@@ -1,8 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+module PelitaClient (Player, withPelita, Universe, GameState, setInitial, getMove) where
+
 import Control.Monad
+import Control.Monad.State
 import Control.Applicative
 import Data.Monoid
+import Data.Traversable
 
 import System.Exit
 import System.IO
@@ -49,7 +53,7 @@ instance FromJSON GameState where
   parseJSON _ = undefined
 
 instance FromJSON PelitaMsg where
-  parseJSON (Object o) = trace (show o) $ PelitaMsg <$> action <*> uuid <*> data_
+  parseJSON (Object o) = PelitaMsg <$> action <*> uuid <*> data_
     where
         action = o .: "__action__"
         uuid = o .: "__uuid__"
@@ -81,34 +85,64 @@ doWithAction (SetInitialData universe gameState) = doWithSetInitial universe gam
 doWithAction (GetMoveData universe gameState) = doWithGetMove universe gameState
 doWithAction (ExitPelita) = toJSON $ (fromList [] :: HashMap String [Int])
 
-doWithPelitaMsg :: PelitaMsg -> Value
-doWithPelitaMsg (PelitaMsg action uuid theData) = toJSON $ (fromList [("__uuid__" , toJSON uuid),
-                                                                      ("__return__", doWithAction theData)] :: HashMap String Value)
 
-main :: IO ()
-main = do
+doWithPelitaMsg :: (PelitaData -> (Value, pl)) -> PelitaMsg -> (Value, pl)
+doWithPelitaMsg action (PelitaMsg actionStr uuid theData) = (toJSON dict, player)
+  where
+    dict :: HashMap String Value
+    dict = (fromList [("__uuid__" , toJSON uuid),
+                      ("__return__", returnValue)])
+    (returnValue, player) = action theData
+
+class Player p where
+  setInitial :: p -> Universe -> GameState -> ((), p)
+  getMove :: p -> Universe -> GameState -> ((Int, Int), p)
+
+withPelita :: Player pl => String -> pl -> IO ()
+withPelita teamName p = do
   args <- getArgs
   progName <- getProgName
   when (length args < 1) $ do
     hPutStrLn stderr $ "usage: " ++ progName ++ " <server-address>"
     exitFailure
 
-  withContext 1 $ \context -> do  
+  withContext 1 $ \context -> do
     -- Socket to talk to server
     withSocket context Pair $ \server -> do
       connect server (args !! 0)
 
-      forever $ do
-        message <- receive server []
-        let strMessage = B.fromChunks [message]
+      playRound server p
+      return ()
+        where
+        getMessage :: Socket a -> IO B.ByteString
+        getMessage server = fmap (\m -> B.fromChunks [m]) (receive server [])
 
-        case eitherDecode strMessage of
-          Left e -> error e
-          Right j -> send server (mconcat $ B.toChunks v) [] -- putStrLn $ show j
-            where s = trace ("sending back " ++ (show v)) $ v
-                  v = encode $ doWithPelitaMsg (trace (show j) j)
+        sendMessage :: Socket a -> B.ByteString -> IO ()
+        sendMessage server str = trace (show str) $ send server (mconcat $ B.toChunks str) []
 
---        putStrLn $ unwords ["Received request:", unpack message]
+        sendValue :: Socket a -> Value -> IO ()
+        sendValue server = sendMessage server . encode
 
-  return ()
+        playRound :: Player pl => Socket a -> pl -> IO pl
+        playRound server p = do
+          strMessage <- getMessage server
+
+          case eitherDecode strMessage of
+            Left e -> error e
+            Right msg -> sendValue server (fst val) >> (snd val)
+              where val = doWithPelitaMsg action msg
+
+                    action (GetTeamNameData) = (toJSON teamName, playRound server p)
+
+                    action (SetInitialData universe gameState) =
+                      let state = setInitial p universe gameState in
+                        (toJSON (fst state), playRound server (snd state))
+
+                    action (GetMoveData universe gameState) =
+                      let state = getMove p universe gameState
+                          move = [fst (fst state), snd (fst state)] :: [Int]
+                      in
+                        (toJSON $ fromList [("move" :: String, move)], playRound server (snd state))
+
+                    action (ExitPelita) = (toJSON $ (fromList [] :: HashMap String [Int]), return p)
 

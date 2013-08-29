@@ -1,6 +1,6 @@
 Usage
 -----
 
-    $ ghc pelita-client.hs
-    $ ./pelita-client <address>
+    $ ghc my-pelita-client.hs
+    $ ./my-pelita-client <address>
 
