@@ -95,8 +95,8 @@ doWithPelitaMsg action (PelitaMsg actionStr uuid theData) = (toJSON dict, player
     (returnValue, player) = action theData
 
 class Player p where
-  setInitial :: p -> Universe -> GameState -> ((), p)
-  getMove :: p -> Universe -> GameState -> ((Int, Int), p)
+  setInitial :: Universe -> GameState -> State p ()
+  getMove :: Universe -> GameState -> State p (Int, Int)
 
 withPelita :: Player pl => String -> pl -> IO ()
 withPelita teamName p = do
@@ -135,11 +135,11 @@ withPelita teamName p = do
                     action (GetTeamNameData) = (toJSON teamName, playRound server p)
 
                     action (SetInitialData universe gameState) =
-                      let state = setInitial p universe gameState in
+                      let state = runState (setInitial universe gameState) p in
                         (toJSON (fst state), playRound server (snd state))
 
                     action (GetMoveData universe gameState) =
-                      let state = getMove p universe gameState
+                      let state = runState (getMove universe gameState) p
                           move = [fst (fst state), snd (fst state)] :: [Int]
                       in
                         (toJSON $ fromList [("move" :: String, move)], playRound server (snd state))
