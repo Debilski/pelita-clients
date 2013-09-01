@@ -22,10 +22,29 @@ import           Data.Aeson
 import           Data.Aeson.Types
 
 import Data.HashMap.Strict
+import qualified Data.Set as Set
+import qualified Data.Sequence as Seq
+import qualified Data.Vector as Vector
+
+import Data.Maybe (maybeToList)
 
 import Debug.Trace
 
-data Universe = Universe Int Int deriving (Eq, Show)
+data MazeItem = Wall | Food deriving (Show, Eq, Ord)
+data Maze = Maze { fromSeq :: Seq.Seq (Set.Set MazeItem) } deriving (Show, Eq)
+
+convertMazeString :: String -> Set.Set MazeItem
+convertMazeString str = Set.fromList $ str >>= (maybeToList . convertMazeChar)
+
+convertMazeChar :: Char -> Maybe MazeItem
+convertMazeChar '#' = Just Wall
+convertMazeChar '.' = Just Food
+convertMazeChar _ = Nothing
+
+instance FromJSON Maze where
+  parseJSON (Array a) = return $ Maze $ fmap convertMazeString (Seq.fromList . Vector.toList $ fmap show a)
+
+data Universe = Universe Int Int Maze deriving (Eq)
 data GameState = GameState Object deriving (Eq, Show)
 
 data PelitaData = GetTeamNameData
@@ -45,8 +64,20 @@ instance FromJSON Universe where
     (Object maze) <- value .: "maze"
     w <- maze .: "width"
     h <- maze .: "height"
-    return $ Universe w h -- <$> o .: "width" <*> o .: "height"
+    mazeObject <- maze .: "data"
+    return $ Universe w h mazeObject -- <$> o .: "width" <*> o .: "height"
   parseJSON _ = undefined
+
+instance Show Universe where
+  show (Universe w h (Maze m)) = join $ do
+
+    j <- [0 .. (h - 1)]
+    i <- [0 .. (w - 1)]
+    let items = Seq.index m (j * w + i)
+    return $ (if i == 0 then "\n" else "" ) ++ if Set.member Wall items then "#"
+    else if Set.member Food items then "."
+    else " "
+
 
 instance FromJSON GameState where
   parseJSON (Object o) = return $ GameState Data.HashMap.Strict.empty -- GameState o
