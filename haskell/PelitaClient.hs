@@ -85,14 +85,14 @@ doWithAction (SetInitialData universe gameState) = doWithSetInitial universe gam
 doWithAction (GetMoveData universe gameState) = doWithGetMove universe gameState
 doWithAction (ExitPelita) = toJSON $ (fromList [] :: HashMap String [Int])
 
-
-doWithPelitaMsg :: (PelitaData -> (Value, pl)) -> PelitaMsg -> (Value, pl)
-doWithPelitaMsg action (PelitaMsg actionStr uuid theData) = (toJSON dict, player)
+wrapValue uuid value = toJSON dict
   where
     dict :: HashMap String Value
     dict = (fromList [("__uuid__" , toJSON uuid),
-                      ("__return__", returnValue)])
-    (returnValue, player) = action theData
+                      ("__return__", value)])
+
+doWithPelitaMsg :: (PelitaData -> (Value -> Value) -> IO pl) -> PelitaMsg -> IO pl
+doWithPelitaMsg action (PelitaMsg actionStr uuid theData) = action theData (wrapValue uuid)
 
 class Player p where
   setInitial :: Universe -> GameState -> State p ()
@@ -129,20 +129,26 @@ withPelita teamName p = do
 
           case eitherDecode strMessage of
             Left e -> error e
-            Right msg -> sendValue server (fst val) >> (snd val)
+            Right msg -> val -- sendValue server (fst val) >> (snd val)
               where val = doWithPelitaMsg action msg
 
-                    action (GetTeamNameData) = (toJSON teamName, playRound server p)
+                    action (GetTeamNameData) wrapper = (sendValue server (wrapper $ toJSON teamName)) >> playRound server p
 
-                    action (SetInitialData universe gameState) =
-                      let state = runState (setInitial universe gameState) p in
-                        (toJSON (fst state), playRound server (snd state))
+                    action (SetInitialData universe gameState) wrapper =
+                      let (res, newP) = runState (setInitial universe gameState) p
+                          jsonValue = toJSON res
+                      in (sendValue server (wrapper jsonValue)) >> playRound server newP
 
-                    action (GetMoveData universe gameState) =
-                      let state = runState (getMove universe gameState) p
-                          move = [fst (fst state), snd (fst state)] :: [Int]
-                      in
-                        (toJSON $ fromList [("move" :: String, move)], playRound server (snd state))
+                    action (GetMoveData universe gameState) wrapper =
+                      let (moveTpl, newP) = runState (getMove universe gameState) p
+                          move = [fst moveTpl, snd moveTpl] :: [Int]
+                          jsonValue = toJSON $ fromList [("move" :: String, move)]
+                          nextIO = playRound server newP
+                      in sendValue server (wrapper jsonValue) >> nextIO
 
-                    action (ExitPelita) = (toJSON $ (fromList [] :: HashMap String [Int]), return p)
+
+                    action (ExitPelita) wrapper =
+                      let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
+                          nextIO = return p
+                      in sendValue server (wrapper jsonValue) >> nextIO
 
