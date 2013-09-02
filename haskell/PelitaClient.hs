@@ -30,10 +30,16 @@ import Data.Maybe (maybeToList)
 
 import Debug.Trace
 
+type MazeItems = Set.Set MazeItem
 data MazeItem = Wall | Food deriving (Show, Eq, Ord)
-data Maze = Maze { fromSeq :: Seq.Seq (Set.Set MazeItem) } deriving (Show, Eq)
+data Maze = Maze { fromSeq :: Seq.Seq (Set.Set MazeItem),
+                   mazeWidth :: Int,
+                   mazeHeight :: Int } deriving (Show, Eq)
 
-convertMazeString :: String -> Set.Set MazeItem
+mazeItems :: Maze -> (Int, Int) -> MazeItems
+mazeItems maze (i, j) = Seq.index (fromSeq maze) (i + j * (mazeWidth maze))
+
+convertMazeString :: String -> MazeItems
 convertMazeString str = Set.fromList $ str >>= (maybeToList . convertMazeChar)
 
 convertMazeChar :: Char -> Maybe MazeItem
@@ -42,9 +48,11 @@ convertMazeChar '.' = Just Food
 convertMazeChar _ = Nothing
 
 instance FromJSON Maze where
-  parseJSON (Array a) = return $ Maze $ fmap convertMazeString (Seq.fromList . Vector.toList $ fmap show a)
+  parseJSON (Object o) = do
+    (Array mazeData) <- o .: "data"
+    Maze <$> (return $ fmap convertMazeString (Seq.fromList . Vector.toList $ fmap show mazeData)) <*> (o .: "width") <*> (o .: "height")
 
-data Universe = Universe Int Int Maze deriving (Eq)
+data Universe = Universe Maze deriving (Eq)
 data GameState = GameState Object deriving (Eq, Show)
 
 data PelitaData = GetTeamNameData
@@ -61,19 +69,16 @@ data PelitaMsg = PelitaMsg {
 instance FromJSON Universe where
   parseJSON (Object o) = do
     (Object value) <- o .: "__value__"
-    (Object maze) <- value .: "maze"
-    w <- maze .: "width"
-    h <- maze .: "height"
-    mazeObject <- maze .: "data"
-    return $ Universe w h mazeObject -- <$> o .: "width" <*> o .: "height"
+    let maze = value .: "maze"
+
+    Universe <$> maze -- <$> o .: "width" <*> o .: "height"
   parseJSON _ = undefined
 
 instance Show Universe where
-  show (Universe w h (Maze m)) = join $ do
-
-    j <- [0 .. (h - 1)]
-    i <- [0 .. (w - 1)]
-    let items = Seq.index m (j * w + i)
+  show (Universe (Maze md mazeWidth mazeHeight)) = join $ do
+    j <- [0 .. (mazeHeight - 1)]
+    i <- [0 .. (mazeWidth - 1)]
+    let items = Seq.index md (j * mazeWidth + i)
     return $ (if i == 0 then "\n" else "" ) ++ if Set.member Wall items then "#"
     else if Set.member Food items then "."
     else " "
