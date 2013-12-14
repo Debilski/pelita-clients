@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module PelitaClient (Player, withPelita, Universe, GameState, setInitial, getMove) where
+module PelitaClient (Player, withPelita, Universe(..), Maze(..), GameState, setInitial, getMove) where
 
 import Control.Monad
 import Control.Monad.State
@@ -32,7 +32,7 @@ import Debug.Trace
 
 type MazeItems = Set.Set MazeItem
 data MazeItem = Wall | Food deriving (Show, Eq, Ord)
-data Maze = Maze { fromSeq :: Seq.Seq (Set.Set MazeItem),
+data Maze = Maze { fromSeq :: Seq.Seq MazeItems,
                    mazeWidth :: Int,
                    mazeHeight :: Int } deriving (Show, Eq)
 
@@ -51,6 +51,7 @@ instance FromJSON Maze where
   parseJSON (Object o) = do
     (Array mazeData) <- o .: "data"
     Maze <$> (return $ fmap convertMazeString (Seq.fromList . Vector.toList $ fmap show mazeData)) <*> (o .: "width") <*> (o .: "height")
+
 
 data Universe = Universe Maze deriving (Eq)
 data GameState = GameState Object deriving (Eq, Show)
@@ -79,9 +80,11 @@ instance Show Universe where
     j <- [0 .. (mazeHeight - 1)]
     i <- [0 .. (mazeWidth - 1)]
     let items = Seq.index md (j * mazeWidth + i)
-    return $ (if i == 0 then "\n" else "" ) ++ if Set.member Wall items then "#"
-    else if Set.member Food items then "."
-    else " "
+    return $ (if i == 0 then "\n" else "" ) ++ if Set.member Wall items
+        then "#"
+        else if Set.member Food items
+           then "."
+           else " "
 
 
 instance FromJSON GameState where

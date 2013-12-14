@@ -1,0 +1,13 @@
+name:            pelita-haskell
+build-type:      Simple
+cabal-version:   >= 1.8
+version:         0.1
+
+library
+  exposed-modules: PelitaClient
+  hs-source-dirs:  src-lib
+  build-depends:   base, zeromq-haskell, aeson, vector, containers, unordered-containers, bytestring, mtl
+
+executable my-pelita-client
+  build-depends:   pelita-haskell, base
+  Main-Is:         my-pelita-client.hs
