@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module PelitaClient (Player, withPelita, Universe(..), Maze(..), GameState, setInitial, getMove) where
 
@@ -153,11 +154,46 @@ withPelita teamName p = do
     playRound sock p
     return ()
       where
-      getMessage :: Receiver a => Socket z a -> ZMQ z ByteString
-      getMessage sock = receive sock
 
-      sendMessage :: Sender a => Socket z a -> ByteString -> ZMQ z ()
-      sendMessage sock str = trace (show str) $ send sock [] str
+      playRound :: forall z a pl. (Sender a, Receiver a, Player pl) => Socket z a -> pl -> ZMQ z pl
+      playRound sock p = do
+        strMessage <- getMessage
+
+        case eitherDecodeLazy strMessage of
+          Left e -> error e
+          Right msg -> val -- sendValue sock (fst val) >> (snd val)
+            where val = doWithPelitaMsg action msg
+
+                  action (GetTeamNameData) wrapper =
+                    let jsonValue = toJSON teamName
+                    in (sendValue (wrapper jsonValue)) >> playNext
+
+                  action (SetInitialData universe gameState) wrapper =
+                    let (res, newP) = runState (setInitial universe gameState) p
+                        jsonValue = toJSON res
+                    in (sendValue (wrapper jsonValue)) >> playNext
+
+                  action (GetMoveData universe gameState) wrapper =
+                    let (moveTpl, newP) = runState (getMove universe gameState) p
+                        move = [fst moveTpl, snd moveTpl] :: [Int]
+                        jsonValue = toJSON $ fromList [("move" :: String, move)]
+                    in sendValue (wrapper jsonValue) >> playNext
+
+                  action (ExitPelita) wrapper =
+                    let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
+                    in sendValue (wrapper jsonValue) >> return p
+            where
+                  playNext :: ZMQ z pl
+                  playNext = playRound sock p
+
+                  getMessage :: Receiver a => ZMQ z ByteString
+                  getMessage = receive sock
+
+                  sendValue :: Value -> ZMQ z ()
+                  sendValue = sendMessage . encodeStrict
+
+                  sendMessage :: Sender a => ByteString -> ZMQ z ()
+                  sendMessage str = trace (show str) $ send sock [] str
 
       encodeStrict :: ToJSON a => a -> ByteString
       encodeStrict = B.toStrict . encode
@@ -165,35 +201,4 @@ withPelita teamName p = do
       eitherDecodeLazy :: FromJSON a => ByteString -> Either String a
       eitherDecodeLazy = eitherDecode . B.fromStrict
 
-      sendValue :: Sender a => Socket z a -> Value -> ZMQ z ()
-      sendValue sock = sendMessage sock . encodeStrict
-
-      playRound :: (Sender a, Receiver a, Player pl) => Socket z a -> pl -> ZMQ z pl
-      playRound sock p = do
-        strMessage <- getMessage sock
-
-        case eitherDecodeLazy strMessage of
-          Left e -> error e
-          Right msg -> val -- sendValue sock (fst val) >> (snd val)
-            where val = doWithPelitaMsg action msg
-
-                  action (GetTeamNameData) wrapper = (sendValue sock (wrapper $ toJSON teamName)) >> playRound sock p
-
-                  action (SetInitialData universe gameState) wrapper =
-                    let (res, newP) = runState (setInitial universe gameState) p
-                        jsonValue = toJSON res
-                    in (sendValue sock (wrapper jsonValue)) >> playRound sock newP
-
-                  action (GetMoveData universe gameState) wrapper =
-                    let (moveTpl, newP) = runState (getMove universe gameState) p
-                        move = [fst moveTpl, snd moveTpl] :: [Int]
-                        jsonValue = toJSON $ fromList [("move" :: String, move)]
-                        nextIO = playRound sock newP
-                    in sendValue sock (wrapper jsonValue) >> nextIO
-
-
-                  action (ExitPelita) wrapper =
-                    let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
-                        nextIO = return p
-                    in sendValue sock (wrapper jsonValue) >> nextIO
 
