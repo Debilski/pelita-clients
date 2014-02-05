@@ -147,17 +147,17 @@ withPelita teamName p = do
 
   runZMQ $ do
     -- Pair socket to talk to server
-    server <- socket Pair
-    connect server (args !! 0)
+    sock <- socket Pair
+    connect sock (args !! 0)
 
-    playRound server p
+    playRound sock p
     return ()
       where
       getMessage :: Receiver a => Socket z a -> ZMQ z ByteString
-      getMessage server = receive server
+      getMessage sock = receive sock
 
       sendMessage :: Sender a => Socket z a -> ByteString -> ZMQ z ()
-      sendMessage server str = trace (show str) $ send server [] str
+      sendMessage sock str = trace (show str) $ send sock [] str
 
       encodeStrict :: ToJSON a => a -> ByteString
       encodeStrict = B.toStrict . encode
@@ -166,34 +166,34 @@ withPelita teamName p = do
       eitherDecodeLazy = eitherDecode . B.fromStrict
 
       sendValue :: Sender a => Socket z a -> Value -> ZMQ z ()
-      sendValue server = sendMessage server . encodeStrict
+      sendValue sock = sendMessage sock . encodeStrict
 
       playRound :: (Sender a, Receiver a, Player pl) => Socket z a -> pl -> ZMQ z pl
-      playRound server p = do
-        strMessage <- getMessage server
+      playRound sock p = do
+        strMessage <- getMessage sock
 
         case eitherDecodeLazy strMessage of
           Left e -> error e
-          Right msg -> val -- sendValue server (fst val) >> (snd val)
+          Right msg -> val -- sendValue sock (fst val) >> (snd val)
             where val = doWithPelitaMsg action msg
 
-                  action (GetTeamNameData) wrapper = (sendValue server (wrapper $ toJSON teamName)) >> playRound server p
+                  action (GetTeamNameData) wrapper = (sendValue sock (wrapper $ toJSON teamName)) >> playRound sock p
 
                   action (SetInitialData universe gameState) wrapper =
                     let (res, newP) = runState (setInitial universe gameState) p
                         jsonValue = toJSON res
-                    in (sendValue server (wrapper jsonValue)) >> playRound server newP
+                    in (sendValue sock (wrapper jsonValue)) >> playRound sock newP
 
                   action (GetMoveData universe gameState) wrapper =
                     let (moveTpl, newP) = runState (getMove universe gameState) p
                         move = [fst moveTpl, snd moveTpl] :: [Int]
                         jsonValue = toJSON $ fromList [("move" :: String, move)]
-                        nextIO = playRound server newP
-                    in sendValue server (wrapper jsonValue) >> nextIO
+                        nextIO = playRound sock newP
+                    in sendValue sock (wrapper jsonValue) >> nextIO
 
 
                   action (ExitPelita) wrapper =
                     let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
                         nextIO = return p
-                    in sendValue server (wrapper jsonValue) >> nextIO
+                    in sendValue sock (wrapper jsonValue) >> nextIO
 
