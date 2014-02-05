@@ -11,10 +11,10 @@ import Data.Traversable
 import System.Exit
 import System.IO
 import System.Environment
-import System.ZMQ
+import System.ZMQ4.Monadic
 
-import Data.ByteString.Char8 (pack, unpack)
-import qualified Data.ByteString.Lazy as B
+import qualified  Data.ByteString.Lazy  as B
+import            Data.ByteString       (ByteString)
 
 import           Control.Applicative
 import           Control.Monad
@@ -130,7 +130,7 @@ wrapValue uuid value = toJSON dict
     dict = (fromList [("__uuid__" , toJSON uuid),
                       ("__return__", value)])
 
-doWithPelitaMsg :: (PelitaData -> (Value -> Value) -> IO pl) -> PelitaMsg -> IO pl
+doWithPelitaMsg :: (PelitaData -> (Value -> Value) -> ZMQ z pl) -> PelitaMsg -> ZMQ z pl
 doWithPelitaMsg action (PelitaMsg actionStr uuid theData) = action theData (wrapValue uuid)
 
 class Player p where
@@ -145,49 +145,55 @@ withPelita teamName p = do
     hPutStrLn stderr $ "usage: " ++ progName ++ " <server-address>"
     exitFailure
 
-  withContext 1 $ \context -> do
-    -- Socket to talk to server
-    withSocket context Pair $ \server -> do
-      connect server (args !! 0)
+  runZMQ $ do
+    -- Pair socket to talk to server
+    server <- socket Pair
+    connect server (args !! 0)
 
-      playRound server p
-      return ()
-        where
-        getMessage :: Socket a -> IO B.ByteString
-        getMessage server = fmap (\m -> B.fromChunks [m]) (receive server [])
+    playRound server p
+    return ()
+      where
+      getMessage :: Receiver a => Socket z a -> ZMQ z ByteString
+      getMessage server = receive server
 
-        sendMessage :: Socket a -> B.ByteString -> IO ()
-        sendMessage server str = trace (show str) $ send server (mconcat $ B.toChunks str) []
+      sendMessage :: Sender a => Socket z a -> ByteString -> ZMQ z ()
+      sendMessage server str = trace (show str) $ send server [] str
 
-        sendValue :: Socket a -> Value -> IO ()
-        sendValue server = sendMessage server . encode
+      encodeStrict :: ToJSON a => a -> ByteString
+      encodeStrict = B.toStrict . encode
 
-        playRound :: Player pl => Socket a -> pl -> IO pl
-        playRound server p = do
-          strMessage <- getMessage server
+      eitherDecodeLazy :: FromJSON a => ByteString -> Either String a
+      eitherDecodeLazy = eitherDecode . B.fromStrict
 
-          case eitherDecode strMessage of
-            Left e -> error e
-            Right msg -> val -- sendValue server (fst val) >> (snd val)
-              where val = doWithPelitaMsg action msg
+      sendValue :: Sender a => Socket z a -> Value -> ZMQ z ()
+      sendValue server = sendMessage server . encodeStrict
 
-                    action (GetTeamNameData) wrapper = (sendValue server (wrapper $ toJSON teamName)) >> playRound server p
+      playRound :: (Sender a, Receiver a, Player pl) => Socket z a -> pl -> ZMQ z pl
+      playRound server p = do
+        strMessage <- getMessage server
 
-                    action (SetInitialData universe gameState) wrapper =
-                      let (res, newP) = runState (setInitial universe gameState) p
-                          jsonValue = toJSON res
-                      in (sendValue server (wrapper jsonValue)) >> playRound server newP
+        case eitherDecodeLazy strMessage of
+          Left e -> error e
+          Right msg -> val -- sendValue server (fst val) >> (snd val)
+            where val = doWithPelitaMsg action msg
 
-                    action (GetMoveData universe gameState) wrapper =
-                      let (moveTpl, newP) = runState (getMove universe gameState) p
-                          move = [fst moveTpl, snd moveTpl] :: [Int]
-                          jsonValue = toJSON $ fromList [("move" :: String, move)]
-                          nextIO = playRound server newP
-                      in sendValue server (wrapper jsonValue) >> nextIO
+                  action (GetTeamNameData) wrapper = (sendValue server (wrapper $ toJSON teamName)) >> playRound server p
+
+                  action (SetInitialData universe gameState) wrapper =
+                    let (res, newP) = runState (setInitial universe gameState) p
+                        jsonValue = toJSON res
+                    in (sendValue server (wrapper jsonValue)) >> playRound server newP
+
+                  action (GetMoveData universe gameState) wrapper =
+                    let (moveTpl, newP) = runState (getMove universe gameState) p
+                        move = [fst moveTpl, snd moveTpl] :: [Int]
+                        jsonValue = toJSON $ fromList [("move" :: String, move)]
+                        nextIO = playRound server newP
+                    in sendValue server (wrapper jsonValue) >> nextIO
 
 
-                    action (ExitPelita) wrapper =
-                      let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
-                          nextIO = return p
-                      in sendValue server (wrapper jsonValue) >> nextIO
+                  action (ExitPelita) wrapper =
+                    let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
+                        nextIO = return p
+                    in sendValue server (wrapper jsonValue) >> nextIO
 
