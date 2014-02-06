@@ -171,14 +171,14 @@ withPelita teamName p = do
                     let playerState = setInitial universe gameState
                         (res, newP) = runState playerState plyr
                         jsonValue = toJSON res
-                    in (PlayerResult jsonValue False, plyr)
+                    in (PlayerResult jsonValue False, newP)
 
                   action (GetMoveData universe gameState) plyr =
                     let playerState = getMove universe gameState
                         (moveTpl, newP) = runState playerState plyr
                         move = [fst moveTpl, snd moveTpl] :: [Int]
                         jsonValue = toJSON $ fromList [("move" :: String, move)]
-                    in (PlayerResult jsonValue False, plyr)
+                    in (PlayerResult jsonValue False, newP)
 
                   action (ExitPelita) plyr =
                     let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
