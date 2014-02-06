@@ -125,18 +125,11 @@ doWithAction (SetInitialData universe gameState) = doWithSetInitial universe gam
 doWithAction (GetMoveData universe gameState) = doWithGetMove universe gameState
 doWithAction (ExitPelita) = toJSON $ (fromList [] :: HashMap String [Int])
 
-wrapValue uuid value = toJSON dict
-  where
-    dict :: HashMap String Value
-    dict = (fromList [("__uuid__" , toJSON uuid),
-                      ("__return__", value)])
-
-doWithPelitaMsg :: (PelitaData -> (Value -> Value) -> ZMQ z pl) -> PelitaMsg -> ZMQ z pl
-doWithPelitaMsg action (PelitaMsg actionStr uuid theData) = action theData (wrapValue uuid)
-
 class Player p where
   setInitial :: Universe -> GameState -> State p ()
   getMove :: Universe -> GameState -> State p (Int, Int)
+
+data PlayerResult pl = PlayerResult Value pl Bool
 
 withPelita :: Player pl => String -> pl -> IO ()
 withPelita teamName p = do
@@ -161,30 +154,46 @@ withPelita teamName p = do
 
         case eitherDecodeLazy strMessage of
           Left e -> error e
-          Right msg -> val -- sendValue sock (fst val) >> (snd val)
-            where val = doWithPelitaMsg action msg
+          Right incomingMessage -> nextAction -- sendValue sock (fst val) >> (snd val)
+            where nextAction :: ZMQ z pl
+                  nextAction =
+                    let (PelitaMsg _ uuid pelitaData) = incomingMessage
+                        (PlayerResult jsonValue newPlayer finished) = action pelitaData p
+                    in sendValue (wrapValue uuid jsonValue) >> if finished then (return newPlayer)
+                                                                           else (playNext newPlayer)
 
-                  action (GetTeamNameData) wrapper =
+                  action :: PelitaData -> pl -> PlayerResult pl
+                  action (GetTeamNameData) plyr =
                     let jsonValue = toJSON teamName
-                    in (sendValue (wrapper jsonValue)) >> playNext
+                    in (PlayerResult jsonValue plyr False)
 
-                  action (SetInitialData universe gameState) wrapper =
-                    let (res, newP) = runState (setInitial universe gameState) p
+                  action (SetInitialData universe gameState) plyr =
+                    let playerState = setInitial universe gameState
+                        (res, newP) = runState playerState plyr
                         jsonValue = toJSON res
-                    in (sendValue (wrapper jsonValue)) >> playNext
+                    in (PlayerResult jsonValue plyr False)
 
-                  action (GetMoveData universe gameState) wrapper =
-                    let (moveTpl, newP) = runState (getMove universe gameState) p
+                  action (GetMoveData universe gameState) plyr =
+                    let playerState = getMove universe gameState
+                        (moveTpl, newP) = runState playerState plyr
                         move = [fst moveTpl, snd moveTpl] :: [Int]
                         jsonValue = toJSON $ fromList [("move" :: String, move)]
-                    in sendValue (wrapper jsonValue) >> playNext
+                    in (PlayerResult jsonValue plyr False)
 
-                  action (ExitPelita) wrapper =
+                  action (ExitPelita) plyr =
                     let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
-                    in sendValue (wrapper jsonValue) >> return p
+                    in (PlayerResult jsonValue plyr True)
+
+                  wrapValue :: String -> Value -> Value
+                  wrapValue uuid value = toJSON dict
+                    where
+                      dict :: HashMap String Value
+                      dict = (fromList [("__uuid__" , toJSON uuid),
+                                        ("__return__", value)])
+
             where
-                  playNext :: ZMQ z pl
-                  playNext = playRound sock p
+                  playNext :: pl -> ZMQ z pl
+                  playNext = playRound sock
 
                   getMessage :: Receiver a => ZMQ z ByteString
                   getMessage = receive sock
