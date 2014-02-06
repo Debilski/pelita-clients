@@ -129,7 +129,7 @@ class Player p where
   setInitial :: Universe -> GameState -> State p ()
   getMove :: Universe -> GameState -> State p (Int, Int)
 
-data PlayerResult pl = PlayerResult Value pl Bool
+data PlayerResult = PlayerResult Value Bool
 
 withPelita :: Player pl => String -> pl -> IO ()
 withPelita teamName p = do
@@ -158,31 +158,31 @@ withPelita teamName p = do
             where nextAction :: ZMQ z pl
                   nextAction =
                     let (PelitaMsg _ uuid pelitaData) = incomingMessage
-                        (PlayerResult jsonValue newPlayer finished) = action pelitaData p
+                        (PlayerResult jsonValue finished, newPlayer) = action pelitaData p
                     in sendValue (wrapValue uuid jsonValue) >> if finished then (return newPlayer)
                                                                            else (playNext newPlayer)
 
-                  action :: PelitaData -> pl -> PlayerResult pl
+                  action :: PelitaData -> pl -> (PlayerResult, pl)
                   action (GetTeamNameData) plyr =
                     let jsonValue = toJSON teamName
-                    in (PlayerResult jsonValue plyr False)
+                    in (PlayerResult jsonValue False, plyr)
 
                   action (SetInitialData universe gameState) plyr =
                     let playerState = setInitial universe gameState
                         (res, newP) = runState playerState plyr
                         jsonValue = toJSON res
-                    in (PlayerResult jsonValue plyr False)
+                    in (PlayerResult jsonValue False, plyr)
 
                   action (GetMoveData universe gameState) plyr =
                     let playerState = getMove universe gameState
                         (moveTpl, newP) = runState playerState plyr
                         move = [fst moveTpl, snd moveTpl] :: [Int]
                         jsonValue = toJSON $ fromList [("move" :: String, move)]
-                    in (PlayerResult jsonValue plyr False)
+                    in (PlayerResult jsonValue False, plyr)
 
                   action (ExitPelita) plyr =
                     let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
-                    in (PlayerResult jsonValue plyr True)
+                    in (PlayerResult jsonValue True, plyr)
 
                   wrapValue :: String -> Value -> Value
                   wrapValue uuid value = toJSON dict
