@@ -168,17 +168,10 @@ withPelita teamName p = do
                     in return $ PlayerResult jsonValue False
 
                   action (SetInitialData universe gameState) =
-                    modifyResult $ runPlayer
+                    modifyResult <$> runPlayer
                     where
-                      playerState = setInitial universe gameState
-                      runPlayer :: State pl ()
-                      runPlayer = playerState
-                      jsonValue :: State pl () -> State pl Value
-                      jsonValue = fmap toJSON
-                      wrapIt :: State pl Value -> State pl PlayerResult
-                      wrapIt = fmap (\res -> (PlayerResult res False))
-                      modifyResult :: State pl () -> State pl PlayerResult
-                      modifyResult = wrapIt . jsonValue
+                      runPlayer = setInitial universe gameState
+                      modifyResult res = (PlayerResult (toJSON res) False)
 
                   action (GetMoveData universe gameState) =
                     modifyResult <$> runPlayer
