@@ -72,12 +72,6 @@ data PelitaData = GetTeamNameData
                 | GetMoveData Universe GameState
                 | ExitPelita deriving (Eq, Show)
 
-data PelitaMsg = PelitaMsg
-    { action  :: String
-    , uuid    :: String
-    , theData :: PelitaData
-    } deriving (Show)
-
 instance FromJSON Universe where
     parseJSON (Object o) = do
         (Object value) <- o .: "__value__"
@@ -101,8 +95,11 @@ instance FromJSON GameState where
     parseJSON (Object _) = return $ GameState Data.HashMap.Strict.empty -- GameState o
     parseJSON _ = undefined
 
-instance FromJSON PelitaMsg where
-    parseJSON (Object o) = PelitaMsg <$> action <*> uuid <*> data_
+type UUID = String
+data PelitaMessage = PelitaMessage UUID PelitaData deriving (Show)
+
+instance FromJSON PelitaMessage where
+    parseJSON (Object o) = PelitaMessage <$> uuid <*> data_
       where
         action = o .: "__action__"
         uuid = o .: "__uuid__"
@@ -111,11 +108,11 @@ instance FromJSON PelitaMsg where
         parseData :: String -> Value -> Parser PelitaData
         parseData "team_name" _ = return GetTeamNameData
         parseData "set_initial" (Object o) = SetInitialData
-                           <$> o .: "universe"
-                           <*> o .: "game_state"
+                                           <$> o .: "universe"
+                                           <*> o .: "game_state"
         parseData "get_move" (Object o) = GetMoveData
-                           <$> o .: "universe"
-                           <*> o .: "game_state"
+                                        <$> o .: "universe"
+                                        <*> o .: "game_state"
         parseData "exit" _ = return ExitPelita
         parseData _ _ = undefined
 
@@ -152,7 +149,7 @@ withPelita teamName p = do
                   where
                     nextAction :: ZMQ z pl
                     nextAction =
-                        let (PelitaMsg _ uuid pelitaData) = incomingMessage
+                        let (PelitaMessage uuid pelitaData) = incomingMessage
                             (PlayerResult jsonValue finished, newPlayer) = runState (action pelitaData) p
                         in sendValue (wrapValue uuid jsonValue) >> if finished then (return newPlayer)
                                                                                else (playNext newPlayer)
