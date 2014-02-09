@@ -27,9 +27,10 @@ import           Data.Aeson
 import           Data.Aeson.Types
 
 import           Data.HashMap.Strict
-import qualified Data.Sequence        as Seq
 import qualified Data.Set             as Set
 import qualified Data.Vector          as Vector
+
+import qualified Data.Array           as A
 
 import           Data.Maybe           (maybeToList)
 
@@ -41,12 +42,14 @@ instance Show MazeItem where
     show Wall = "#"
     show Food = "."
 
-data Maze = Maze { fromSeq    :: Seq.Seq MazeItems,
-                   mazeWidth  :: Int,
-                   mazeHeight :: Int } deriving (Show, Eq)
+data Maze = Maze (A.Array (Int, Int) MazeItems) deriving (Eq)
+rowIdx :: Maze -> [Int]
+rowIdx (Maze a) = [(snd . fst $ A.bounds a) .. (snd . snd $ A.bounds a)]
+colIdx :: Maze -> [Int]
+colIdx (Maze a) = [(fst . fst $ A.bounds a) .. (fst . snd $ A.bounds a)]
 
 mazeItems :: Maze -> (Int, Int) -> MazeItems
-mazeItems maze (i, j) = Seq.index (fromSeq maze) (i + j * (mazeWidth maze))
+mazeItems (Maze a) (i, j) = a A.! (i, j)
 
 convertMazeString :: String -> MazeItems
 convertMazeString str = Set.fromList $ str >>= (maybeToList . convertMazeChar)
@@ -59,9 +62,18 @@ convertMazeChar _ = Nothing
 instance FromJSON Maze where
     parseJSON (Object o) = do
         (Array mazeData) <- o .: "data"
-        Maze <$> (return $ fmap convertMazeString (Seq.fromList . Vector.toList $ fmap show mazeData))
-             <*> (o .: "width")
-             <*> (o .: "height")
+        width <- (o .: "width")
+        height <- (o .: "height")
+        let dimensions = ((1, 1), (width, height)) :: ((Int, Int), (Int, Int))
+        let elements = fmap convertMazeString (Vector.toList $ fmap show mazeData) :: [MazeItems]
+        let elemIdx = do
+            j <- [1 .. height]
+            i <- [1 .. width]
+            return (i, j)
+        let ar = A.array dimensions (zip elemIdx elements)
+        return $ Maze ar
+
+-- (return $ fmap convertMazeString (Seq.fromList . Vector.toList $ fmap show mazeData))
 
 
 data Universe = Universe Maze deriving (Eq)
@@ -80,12 +92,14 @@ instance FromJSON Universe where
     parseJSON _ = undefined
 
 instance Show Universe where
-    show (Universe (Maze md mazeWidth mazeHeight)) = join $ do
-        j <- [0 .. (mazeHeight - 1)]
-        i <- [0 .. (mazeWidth - 1)]
-        let items = Seq.index md (j * mazeWidth + i)
-        return $ (if i == 0 then "\n" else "" ) ++ characterFor items
-      where characterFor items = if Set.member Wall items
+    show (Universe maze) = join $ do
+        row <- rowIdx maze
+        return $ "\n" ++ showRow row
+      where
+        showRow row = join $ do
+            col <- colIdx maze
+            return $ characterFor (mazeItems maze (col, row))
+        characterFor items = if Set.member Wall items
                                  then "#"
                                  else if Set.member Food items
                                       then "."
