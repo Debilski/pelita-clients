@@ -137,7 +137,7 @@ class Player p where
 data PlayerResult = PlayerResult Value Bool
 
 withPelita :: Player pl => String -> pl -> IO ()
-withPelita teamName p = do
+withPelita teamName player = do
     args <- getArgs
     progName <- getProgName
     when (length args < 1) $ do
@@ -149,24 +149,29 @@ withPelita teamName p = do
         sock <- socket Pair
         connect sock (args !! 0)
 
-        playRound sock p
-        return ()
+        evalStateT (playRound sock) player
       where
 
-        playRound :: forall z a pl. (Sender a, Receiver a, Player pl) => Socket z a -> pl -> ZMQ z pl
-        playRound sock p = do
-            strMessage <- getMessage
+        playRound :: forall z a pl. (Sender a, Receiver a, Player pl) => Socket z a -> StateT pl (ZMQ z) ()
+        playRound sock = do
+            strMessage <- lift getMessage
 
             case eitherDecodeLazy strMessage of
                 Left e -> error e
-                Right incomingMessage -> nextAction -- sendValue sock (fst val) >> (snd val)
+                Right incomingMessage -> nextAction
                   where
-                    nextAction :: ZMQ z pl
-                    nextAction =
-                        let (PelitaMessage uuid pelitaData) = incomingMessage
-                            (PlayerResult jsonValue finished, newPlayer) = runState (action pelitaData) p
-                        in sendValue (wrapValue uuid jsonValue) >> if finished then (return newPlayer)
-                                                                               else (playNext newPlayer)
+                    nextAction :: StateT pl (ZMQ z) ()
+                    nextAction = hoist (action pelitaData) >>= sendResult >>= checkContinue
+                      where
+                        hoist :: State pl PlayerResult -> StateT pl (ZMQ z) PlayerResult
+                        hoist = StateT . (return .) . runState
+
+                        sendResult (PlayerResult jsonValue finished) = do
+                            lift $ sendValue (wrapValue uuid jsonValue)
+                            return finished
+                        checkContinue finished = if finished then return ()
+                                                             else playNext
+                        PelitaMessage uuid pelitaData = incomingMessage
 
                     action :: PelitaData -> State pl PlayerResult
                     action (GetTeamNameData) =
@@ -192,7 +197,7 @@ withPelita teamName p = do
                         let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
                         in return $ PlayerResult jsonValue True
 
-                    wrapValue :: String -> Value -> Value
+                    wrapValue :: UUID -> Value -> Value
                     wrapValue uuid value = toJSON dict
                       where
                         dict :: HashMap String Value
@@ -200,7 +205,7 @@ withPelita teamName p = do
                                           ("__return__", value)])
 
           where
-            playNext :: pl -> ZMQ z pl
+            playNext :: StateT pl (ZMQ z) ()
             playNext = playRound sock
 
             getMessage :: Receiver a => ZMQ z ByteString
