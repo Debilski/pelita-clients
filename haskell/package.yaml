@@ -1,0 +1,29 @@
+name: PelitaHaskell
+version: 0.1.1
+
+dependencies:
+- base
+- mtl
+
+library:
+  source-dirs: src-lib
+  dependencies:
+  - zeromq4-haskell
+  - array
+  - aeson
+  - vector
+  - containers
+  - unordered-containers
+  - bytestring
+  exposed-modules:
+  - PelitaClient
+
+executables:
+  my-pelita-client:
+    source-dirs: app
+    main: my-pelita-client.hs
+    dependencies:
+    - random
+    - comonad
+    - PelitaHaskell
+

@@ -9,7 +9,8 @@ module PelitaClient
     , Maze(..)
     , GameState
     , setInitial
-    , getMove) where
+    , getMove
+    , teamName) where
 
 import           Control.Applicative
 import           Control.Monad
@@ -36,74 +37,79 @@ import           Data.Maybe           (maybeToList)
 
 import           Debug.Trace
 
-type MazeItems = Set.Set MazeItem
-data MazeItem = Wall | Food deriving (Eq, Ord)
+type MazePos = (Int, Int)
+type MazeMove = (Int, Int)
+
+data MazeItem = Wall | Free deriving (Eq)
 instance Show MazeItem where
     show Wall = "#"
-    show Food = "."
+    show Free = " "
 
-data Maze = Maze (A.Array (Int, Int) MazeItems) deriving (Eq)
+data Maze = Maze (A.Array MazePos MazeItem) deriving (Eq)
 rowIdx :: Maze -> [Int]
 rowIdx (Maze a) = [(snd . fst $ A.bounds a) .. (snd . snd $ A.bounds a)]
 colIdx :: Maze -> [Int]
 colIdx (Maze a) = [(fst . fst $ A.bounds a) .. (fst . snd $ A.bounds a)]
 
-mazeItems :: Maze -> (Int, Int) -> MazeItems
-mazeItems (Maze a) (i, j) = a A.! (i, j)
+mazeItem :: Maze -> MazePos -> MazeItem
+mazeItem (Maze a) (i, j) = a A.! (i, j)
 
-convertMazeString :: String -> MazeItems
-convertMazeString str = Set.fromList $ str >>= (maybeToList . convertMazeChar)
-
-convertMazeChar :: Char -> Maybe MazeItem
-convertMazeChar '#' = Just Wall
-convertMazeChar '.' = Just Food
-convertMazeChar _ = Nothing
+instance FromJSON MazeItem where
+    parseJSON (Bool True) = return Wall
+    parseJSON (Bool False) = return Free
+    parseJSON _ = mzero
 
 instance FromJSON Maze where
     parseJSON (Object o) = do
         (Array mazeData) <- o .: "data"
+        elements <- mapM parseJSON $ Vector.toList mazeData
         width <- (o .: "width")
         height <- (o .: "height")
-        let dimensions = ((1, 1), (width, height)) :: ((Int, Int), (Int, Int))
-        let elements = fmap convertMazeString (Vector.toList $ fmap show mazeData) :: [MazeItems]
+        let dimensions = ((0, 0), (width - 1, height - 1)) :: (MazePos, MazePos)
         let elemIdx = do
-            j <- [1 .. height]
-            i <- [1 .. width]
-            return (i, j)
+              j <- [0 .. (height - 1)]
+              i <- [0 .. (width - 1)]
+              return (i, j)
         let ar = A.array dimensions (zip elemIdx elements)
         return $ Maze ar
 
--- (return $ fmap convertMazeString (Seq.fromList . Vector.toList $ fmap show mazeData))
+data FoodList = FoodList (Vector.Vector MazePos)
 
+instance FromJSON FoodList where
+    parseJSON (Array foodList) = do
+        food <- Vector.mapM parsePos foodList
+        return $ FoodList food
+      where
+        parsePos jsn = do
+            [x, y] <- parseJSON jsn
+            return (x, y)
 
-data Universe = Universe Maze deriving (Eq)
+data Universe = Universe Maze FoodList -- deriving (Eq)
 data GameState = GameState Object deriving (Eq, Show)
 
-data PelitaData = GetTeamNameData
+data PelitaData = TeamNameData
                 | SetInitialData Universe GameState
                 | GetMoveData Universe GameState
-                | ExitPelita deriving (Eq, Show)
+                | ExitPelita deriving (Show)
 
 instance FromJSON Universe where
     parseJSON (Object o) = do
-        (Object value) <- o .: "__value__"
-        let maze = value .: "maze"
-        Universe <$> maze -- <$> o .: "width" <*> o .: "height"
+        let maze = o .: "maze"
+        let foodList = o .: "food"
+        Universe <$> maze <*> foodList -- <$> o .: "width" <*> o .: "height"
     parseJSON _ = undefined
 
 instance Show Universe where
-    show (Universe maze) = join $ do
+    show (Universe maze (FoodList foodList)) = join $ do
         row <- rowIdx maze
         return $ "\n" ++ showRow row
       where
         showRow row = join $ do
             col <- colIdx maze
-            return $ characterFor (mazeItems maze (col, row))
-        characterFor items = if Set.member Wall items
-                                 then "#"
-                                 else if Set.member Food items
+            return $ (mazeItemOrFood maze (col, row))
+        mazeItemOrFood maze pos = if pos `Vector.elem` foodList
                                       then "."
-                                      else " "
+                                      else show $ mazeItem maze pos
 
 instance FromJSON GameState where
     parseJSON (Object _) = return $ GameState Data.HashMap.Strict.empty -- GameState o
@@ -120,7 +126,7 @@ instance FromJSON PelitaMessage where
         data_ = join $ parseData <$> action <*> ((o .: "__data__") :: Parser Value)
 
         parseData :: String -> Value -> Parser PelitaData
-        parseData "team_name" _ = return GetTeamNameData
+        parseData "team_name" (Object o) = return TeamNameData
         parseData "set_initial" (Object o) = SetInitialData
                                            <$> o .: "universe"
                                            <*> o .: "game_state"
@@ -131,19 +137,48 @@ instance FromJSON PelitaMessage where
         parseData _ _ = undefined
 
 class Player p where
+    teamName :: State p String
     setInitial :: Universe -> GameState -> State p ()
-    getMove :: Universe -> GameState -> State p (Int, Int)
+    getMove :: Universe -> GameState -> State p MazeMove
+
+
+action :: Player pl => PelitaData -> State pl PlayerResult
+action (TeamNameData) =
+    modifyResult <$> teamName
+    where
+        modifyResult res = (PlayerResult (toJSON res) True)
+
+action (SetInitialData universe gameState) =
+    modifyResult <$> runPlayer
+    where
+        runPlayer = setInitial universe gameState >> teamName
+        modifyResult res = (PlayerResult (toJSON res) False)
+
+action (GetMoveData universe gameState) =
+    modifyResult <$> runPlayer
+    where
+        runPlayer = getMove universe gameState
+        modifyResult moveTpl =
+            let move = [fst moveTpl, snd moveTpl] :: [Int]
+                jsonValue = toJSON $ fromList [("move" :: String, move)]
+            in PlayerResult jsonValue False
+
+action (ExitPelita) =
+    let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
+    in return $ PlayerResult jsonValue True
+
 
 data PlayerResult = PlayerResult Value Bool
 
-withPelita :: Player pl => String -> pl -> IO ()
-withPelita teamName player = do
-    args <- getArgs
-    progName <- getProgName
-    when (length args < 1) $ do
+withPelita :: Player pl => StateT pl IO ()
+withPelita = do
+    args <- liftIO getArgs
+    progName <- liftIO getProgName
+    when (length args < 1) . liftIO $ do
         hPutStrLn stderr $ "usage: " ++ progName ++ " <server-address>"
         exitFailure
 
+    player <- get
     runZMQ $ do
         -- Pair socket to talk to server
         sock <- socket Pair
@@ -173,30 +208,6 @@ withPelita teamName player = do
                                                              else playNext
                         PelitaMessage uuid pelitaData = incomingMessage
 
-                    action :: PelitaData -> State pl PlayerResult
-                    action (GetTeamNameData) =
-                        let jsonValue = toJSON teamName
-                        in return $ PlayerResult jsonValue False
-
-                    action (SetInitialData universe gameState) =
-                        modifyResult <$> runPlayer
-                        where
-                          runPlayer = setInitial universe gameState
-                          modifyResult res = (PlayerResult (toJSON res) False)
-
-                    action (GetMoveData universe gameState) =
-                        modifyResult <$> runPlayer
-                        where
-                          runPlayer = getMove universe gameState
-                          modifyResult moveTpl =
-                            let move = [fst moveTpl, snd moveTpl] :: [Int]
-                                jsonValue = toJSON $ fromList [("move" :: String, move)]
-                            in PlayerResult jsonValue False
-
-                    action (ExitPelita) =
-                        let jsonValue = toJSON $ (fromList [] :: HashMap String [Int])
-                        in return $ PlayerResult jsonValue True
-
                     wrapValue :: UUID -> Value -> Value
                     wrapValue uuid value = toJSON dict
                       where
@@ -222,5 +233,3 @@ withPelita teamName player = do
 
         eitherDecodeLazy :: FromJSON a => ByteString -> Either String a
         eitherDecodeLazy = eitherDecode . B.fromStrict
-
-
